@@ -1,0 +1,216 @@
+.. _write-operations-bulk-insert:
+
+================================
+Bulk Write Operations in MongoDB
+================================
+
+.. default-domain:: mongodb
+
+You may need to insert, update, or remove large amounts of data stored in
+a MongoDB database. Use the :method:`Bulk()` operations builder to
+construct a list of write operations to perform in bulk for a single
+collection. MongoDB allows applications to determine the acceptable level
+of acknowledgement required of bulk write operations.
+
+Bulk inserts add each document atomically. Bulk inserts can significantly
+increase performance by amortizing :ref:`write concern
+<write-operations-write-concern>` costs.
+
+A list of write operations executed serially is *ordered* while operations
+executed in parallel or in a nondeterministic order are *unordered*.
+
+Ordered bulk operations use the
+:method:`db.collection.initializeOrderedBulkOp()` method. If an error
+occurs during the processing of one of the write operations, MongoDB will
+return without processing any remaining write operations in the list.
+
+Unordered bulk operations use the
+:method:`db.collection.initializeUnorderedBulkOp()` method. If an error
+occurs during the processing of one of the write operations, MongoDB will
+continue to process remaining write operations in the list.
+
+.. versionadded:: 2.6
+
+MongoDB adds the write commands :dbcommand:`insert`, :dbcommand:`update`,
+and :dbcommand:`delete`, which provide the basis for the improved bulk
+insert.
+
+The :program:`mongo` shell now includes methods to perform bulk-write
+operations. See :method:`Bulk()` and :ref:`write-methods-incompatibility`
+for more information.
+
+See :doc:`/reference/method/js-bulk` and
+:doc:`/core/write-operations-introduction` for more information.
+
+.. TODO: section on general write operation considerations?
+
+Examples
+--------
+
+Bulk Insert
+~~~~~~~~~~~
+
+The following initializes a :method:`Bulk()` operations builder for the
+``items`` collection and adds a series of insert operations to add
+multiple documents:
+
+.. code-block:: javascript
+
+   var bulk = db.items.initializeUnorderedBulkOp();
+   bulk.insert( { item: "abc123", defaultQty: 100, status: "A", points: 100 } );
+   bulk.insert( { item: "ijk123", defaultQty: 200, status: "A", points: 200 } );
+   bulk.insert( { item: "mop123", defaultQty: 0, status: "P", points: 0 } );
+   bulk.execute();
+
+The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
+that contains the result of the operation.
+
+The following inserts three documents into the ``users`` collection with
+the mongo shell:
+
+.. code-block:: javascript
+
+   db.runCommand(
+      {
+         insert: "users",
+         documents: [
+            { _id: 2, user: "ijk123", status: "A" },
+            { _id: 3, user: "xyz123", status: "P" },
+            { _id: 4, user: "mop123", status: "P" }
+         ],
+         ordered: false,
+         writeConcern: { w: "majority", wtimeout: 5000 }
+      }
+   )
+
+The returned document shows that the command successfully inserted the
+three documents. See :ref:`insert-command-output` for details.
+
+.. code-block:: javascript
+
+   { "ok" : 1, "n" : 3 }
+
+Bulk Update
+~~~~~~~~~~~
+
+The following example initializes a :method:`Bulk()` operations builder
+for the ``items`` collection and adds a remove operation and an update
+operation to the list of operations. The remove operation and the
+update operation use the :method:`Bulk.find()` method to specify a
+condition for their respective actions:
+
+.. code-block:: javascript
+
+   var bulk = db.items.initializeUnorderedBulkOp();
+   bulk.find( { status: "D" } ).remove();
+   bulk.find( { status: "P" } ).update( { $set: { points: 0 } } )
+   bulk.execute();
+
+The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
+that contains the result of the operation.
+
+The following example performs multiple update operations on the
+``users`` collection with the mongo shell:
+
+.. code-block:: javascript
+
+   db.runCommand(
+      {
+         update: "users",
+         updates: [
+            { q: { status: "P" }, u: { $set: { status: "D" } }, multi: true },
+            { q: { _id: 5 }, u: { _id: 5, name: "abc123", status: "A" }, upsert: true }
+         ],
+         ordered: false,
+         writeConcern: { w: "majority", wtimeout: 5000 }
+      }
+   )
+
+The returned document shows that the command modified ``10`` documents
+and upserted a document with the ``_id`` value ``5``. See
+:ref:`update-command-output` for details.
+
+.. code-block:: javascript
+
+   {
+      "ok" : 1,
+      "nModified" : 10,
+      "n" : 11,
+      "upserted" : [
+         {
+            "index" : 1,
+            "_id" : 5
+         }
+      ]
+   }
+
+Bulk Inserts on Sharded Clusters
+--------------------------------
+
+While ``ContinueOnError`` is optional on unsharded clusters, all bulk
+operations to a :term:`sharded collection <sharded cluster>` run with
+``ContinueOnError``, which cannot be disabled.
+
+Large bulk insert operations, including initial data inserts or routine
+data import, can affect :term:`sharded cluster` performance. For
+bulk inserts, consider the following strategies:
+
+Pre-Split the Collection
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+If the sharded collection is empty, then the collection has only
+one initial :term:`chunk`, which resides on a single shard.
+MongoDB must then take time to receive data, create splits, and
+distribute the split chunks to the available shards. To avoid this
+performance cost, you can pre-split the collection, as described in
+:doc:`/tutorial/split-chunks-in-sharded-cluster`.
+
+Insert to Multiple ``mongos``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To parallelize import processes, send insert operations to more than
+one :program:`mongos` instance. Pre-split empty collections first as
+described in :doc:`/tutorial/split-chunks-in-sharded-cluster`.
+
+Avoid Monotonic Throttling
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If your shard key increases monotonically during an insert, then all
+inserted data goes to the last chunk in the collection, which will
+always end up on a single shard. Therefore, the insert capacity of the
+cluster will never exceed the insert capacity of that single shard.
+
+If your insert volume is larger than what a single shard can process,
+and if you cannot avoid a monotonically increasing shard key, then
+consider the following modifications to your application:
+
+- Reverse the binary bits of the shard key. This preserves the
+  information and avoids correlating insertion order with increasing
+  sequence of values.
+
+- Swap the first and last 16-bit words to "shuffle" the inserts.
+
+.. example:: The following example, in C++, swaps the leading and
+   trailing 16-bit word of :term:`BSON` :term:`ObjectIds <ObjectId>`
+   generated so that they are no longer monotonically increasing.
+
+   .. code-block:: cpp
+
+      using namespace mongo;
+      OID make_an_id() {
+        OID x = OID::gen();
+        const unsigned char *p = x.getData();
+        swap( (unsigned short&) p[0], (unsigned short&) p[10] );
+        return x;
+      }
+
+      void foo() {
+        // create an object
+        BSONObj o = BSON( "_id" << make_an_id() << "x" << 3 << "name" << "jane" );
+        // now we may insert o into a sharded collection
+      }
+
+.. seealso:: :ref:`sharding-shard-key` for information
+   on choosing a sharded key. Also see :ref:`Shard Key
+   Internals <sharding-internals-shard-keys>` (in particular,
+   :ref:`sharding-internals-operations-and-reliability`).
