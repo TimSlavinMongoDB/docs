@@ -6,34 +6,41 @@ Bulk Write Operations in MongoDB
 
 .. default-domain:: mongodb
 
-You may need to insert, update, or remove large amounts of data stored in
-a MongoDB database. Use the :method:`Bulk()` operations builder to
-construct a list of write operations to perform in bulk for a single
-collection. MongoDB allows applications to determine the acceptable level
-of acknowledgement required of bulk write operations.
+Overview
+--------
+
+In MongoDB version 2.6, a new write protocol integrates write operations
+with write concerns and provides improved support for bulk operations.
+
+The :method:`Bulk()` operations builder constructs a list of operations to
+perform in bulk for a single collection. MongoDB allows applications to
+determine the acceptable level of acknowledgement required of bulk write
+operations.
 
 Bulk inserts add each document atomically. Bulk inserts can significantly
 increase performance by amortizing :ref:`write concern
 <write-operations-write-concern>` costs.
 
 A list of write operations executed serially is *ordered* while operations
-executed in parallel or in a nondeterministic order are *unordered*.
+executed in parallel or in a nondeterministic order are *unordered*:
 
-Ordered bulk operations use the
-:method:`db.collection.initializeOrderedBulkOp()` method. If an error
-occurs during the processing of one of the write operations, MongoDB will
-return without processing any remaining write operations in the list.
+- Ordered bulk operations use the
+  :method:`db.collection.initializeOrderedBulkOp()` method. If an error
+  occurs during the processing of one of the write operations, MongoDB
+  will return without processing any remaining write operations in the
+  list.
 
-Unordered bulk operations use the
-:method:`db.collection.initializeUnorderedBulkOp()` method. If an error
-occurs during the processing of one of the write operations, MongoDB will
-continue to process remaining write operations in the list.
+- Unordered bulk operations use the
+  :method:`db.collection.initializeUnorderedBulkOp()` method. If an error
+  occurs during the processing of one of the write operations, MongoDB
+  will continue to process remaining write operations in the list.
 
 .. versionadded:: 2.6
 
 MongoDB adds the write commands :dbcommand:`insert`, :dbcommand:`update`,
 and :dbcommand:`delete`, which provide the basis for the improved bulk
-insert.
+insert. All officially supported MongoDB drivers support the new write
+commands.
 
 The :program:`mongo` shell now includes methods to perform bulk-write
 operations. See :method:`Bulk()` and :ref:`write-methods-incompatibility`
@@ -143,6 +150,52 @@ and upserted a document with the ``_id`` value ``5``. See
          }
       ]
    }
+
+Bulk Delete
+~~~~~~~~~~~
+
+The :method:`Bulk.find.remove()` method removes all matching documents in
+a collection. To limit the remove to a single document, see
+:method:`Bulk.find.removeOne()`.
+
+The following example initializes a :method:`Bulk()` operations builder
+for the ``items`` collection and adds a remove operation to the list of
+operations. The remove operation removes all documents in the
+collection where the ``status`` equals ``"D"``:
+
+.. code-block:: javascript
+
+   var bulk = db.items.initializeUnorderedBulkOp();
+   bulk.find( { status: "D" } ).remove();
+   bulk.execute();
+
+The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
+that contains the result of the operation.
+
+The following example performs multiple delete operations on the
+``orders`` collection with the mongo shell:
+
+.. code-block:: javascript
+
+   db.runCommand(
+      {
+         delete: "orders",
+         deletes: [
+            { q: { status: "D" }, limit: 0 },
+            { q: { cust_num: 99999, item: "abc123", status: "A" }, limit: 1 }
+         ],
+         ordered: false,
+         writeConcern: { w: 1 }
+      }
+   )
+
+The returned document shows that the command found and deleted ``21``
+documents in total for the two delete statements. See
+:ref:`delete-command-output` for details.
+
+.. code-block:: javascript
+
+   { "ok" : 1, "n" : 21 }
 
 Bulk Inserts on Sharded Clusters
 --------------------------------
