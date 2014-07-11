@@ -9,38 +9,34 @@ Bulk Write Operations in MongoDB
 Overview
 --------
 
-MongoDB provides a new interface to insert and modify data that allows
+MongoDB 2.6 provides a new interface to insert and modify data that allows
 clients to specify write operations in groups. A new write protocol also
 integrates write operations with write concerns and provides improved
 support for bulk operations.
 
 The :method:`Bulk()` operations builder constructs a list of operations to
-perform in bulk for a single collection. MongoDB allows applications to
-determine the acceptable level of acknowledgement required of bulk write
-operations.
+perform in bulk for a single collection. MongoDB 2.6 allows applications
+to determine the acceptable level of acknowledgement required of bulk
+write operations.
 
-Bulk inserts add each document atomically. Bulk inserts can significantly
-increase performance by amortizing :ref:`write concern
-<write-operations-write-concern>` costs.
-
-A list of write operations executed serially is *ordered* while operations
-executed in parallel or in a nondeterministic order are *unordered*:
+Bulk write operations are **ordered** or **unordered**:
 
 - Ordered bulk operations use the
-  :method:`db.collection.initializeOrderedBulkOp()` method. If an error
-  occurs during the processing of one of the write operations, MongoDB
-  will return without processing any remaining write operations in the
-  list.
+  :method:`db.collection.initializeOrderedBulkOp()` method to execute a
+  list of write operations serially. If an error occurs during the
+  processing of one of the write operations, MongoDB will return without
+  processing any remaining write operations in the list.
 
 - Unordered bulk operations use the
-  :method:`db.collection.initializeUnorderedBulkOp()` method. If an error
-  occurs during the processing of one of the write operations, MongoDB
-  will continue to process remaining write operations in the list.
+  :method:`db.collection.initializeUnorderedBulkOp()` method to execute a
+  list of write operations in parallel or in nondeterministic order. If an
+  error occurs during the processing of one of the write operations,
+  MongoDB will continue to process remaining write operations in the list.
 
-MongoDB 2.6 also adds the write commands :dbcommand:`insert`,
-:dbcommand:`update`, and :dbcommand:`delete`, which provide the basis for
-the improved bulk insert. All officially supported MongoDB drivers support
-the new write commands.
+MongoDB 2.6 also adds the :dbcommand:`insert`, :dbcommand:`update`, and
+:dbcommand:`delete` commands, which provide the basis for the improved
+bulk operations functionality. All officially supported MongoDB drivers
+support these new commands.
 
 See :method:`Bulk()`, :doc:`/reference/method/js-bulk`,
 :doc:`/core/write-operations-introduction`, and
