@@ -9,15 +9,14 @@ Bulk Write Operations in MongoDB
 Overview
 --------
 
-MongoDB 2.6 provides a new interface to insert and modify data that allows
-clients to specify write operations in groups. A new write protocol also
-integrates write operations with write concerns and provides improved
-support for bulk operations.
+MongoDB provides an interface that allows clients to specify write
+operations in groups. A write protocol also integrates write operations
+with write concerns and provides improved support for bulk operations.
 
 The :method:`Bulk()` operations builder constructs a list of operations to
-perform in bulk for a single collection. MongoDB 2.6 allows applications
-to determine the acceptable level of acknowledgement required of bulk
-write operations.
+perform in bulk for a single collection. MongoDB allows applications to
+determine the acceptable level of acknowledgement required of bulk write
+operations.
 
 Bulk write operations are **ordered** or **unordered**:
 
@@ -33,7 +32,20 @@ Bulk write operations are **ordered** or **unordered**:
   error occurs during the processing of one of the write operations,
   MongoDB will continue to process remaining write operations in the list.
 
-MongoDB 2.6 also adds the :dbcommand:`insert`, :dbcommand:`update`, and
+The ordered or unordered type of bulk operations also affects the
+execution order. For example, if an ordered list has two insert operations
+followed by an update operation followed by another insert operation,
+MongoDB groups the operations into three separate groups: the first group
+contains the two insert operations, the second group contains the update
+operation, and the third group contains the last insert operation.
+
+With an unordered bulk operation, the operations in the list may be
+reordered by MongoDB to increase performance. As such, applications should
+not depend on the ordering when performing unordered bulk operations.
+
+.. include:: /includes/fact-bulk-operation-batches.rst
+
+MongoDB also provides the :dbcommand:`insert`, :dbcommand:`update`, and
 :dbcommand:`delete` commands, which provide the basis for the improved
 bulk operations functionality. All officially supported MongoDB drivers
 support these new commands.
@@ -57,39 +69,58 @@ multiple documents:
 
 .. code-block:: javascript
 
-   var bulk = db.items.initializeUnorderedBulkOp();
-   bulk.insert( { item: "abc123", defaultQty: 100, status: "A", points: 100 } );
-   bulk.insert( { item: "ijk123", defaultQty: 200, status: "A", points: 200 } );
-   bulk.insert( { item: "mop123", defaultQty: 0, status: "P", points: 0 } );
+   var bulk = db.items.initializeOrderedBulkOp();
+   bulk.insert( { _id: 1, item: "abc123", status: "A", defaultQty: 500, points: 5 } );
+   bulk.insert( { _id: 2, item: "ijk123", status: "A", defaultQty: 100, points: 10 } );
+   bulk.insert( { _id: 3, item: "mop123", status: "B", defaultQty: 0, points: 0 } );
+   bulk.insert( { _id: 4, item: "qrs123", status: "P", defaultQty: 100, points: 20 } );
+   bulk.find( { status: "D" } ).removeOne();
+   bulk.find( { status: "D" } ).update( { $set: { points: 0 } } );
    bulk.execute();
 
 The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
-that contains the result of the operation.
+that contains the result of the operation:
 
-The following inserts three documents into the ``users`` collection with
-the mongo shell:
+.. code-block:: javascript
+
+   BulkWriteResult({
+      "writeErrors" : [ ],
+      "writeConcernErrors" : [ ],
+      "nInserted" : 4,
+      "nUpserted" : 0,
+      "nMatched" : 0,
+      "nModified" : 0,
+      "nRemoved" : 0,
+      "upserted" : [ ]
+   })
+
+For details on the return object, see :method:`BulkWriteResult()`. For
+details on the batches executed, see :method:`Bulk.getOperations()`.
+
+The following inserts documents into the ``items`` collection:
 
 .. code-block:: javascript
 
    db.runCommand(
       {
-         insert: "users",
+         insert: "items",
          documents: [
-            { _id: 2, user: "ijk123", status: "A" },
-            { _id: 3, user: "xyz123", status: "P" },
-            { _id: 4, user: "mop123", status: "P" }
+            { _id: 11, item: "def123", status: "A", defaultQty: 200, points: 50 },
+            { _id: 12, item: "ghi123", status: "A", defaultQty: 200, points: 50 },
+            { _id: 13, item: "jkl123", status: "B", defaultQty: 100, points: 20 },
+            { _id: 14, item: "mno123", status: "P", defaultQty: 100, points: 20 }
          ],
          ordered: false,
          writeConcern: { w: "majority", wtimeout: 5000 }
       }
    )
 
-The returned document shows that the command successfully inserted the
-three documents. See :ref:`insert-command-output` for details.
+The returned document shows the command successfully inserted the
+documents. See :ref:`insert-command-output` for details.
 
 .. code-block:: javascript
 
-   { "ok" : 1, "n" : 3 }
+   { "ok" : 1, "n" : 4 }
 
 Bulk Update
 ~~~~~~~~~~~
@@ -104,43 +135,56 @@ condition for their respective actions:
 
    var bulk = db.items.initializeUnorderedBulkOp();
    bulk.find( { status: "D" } ).remove();
-   bulk.find( { status: "P" } ).update( { $set: { points: 0 } } )
+   bulk.find( { status: "P" } ).update( { $set: { points: 200 } } )
    bulk.execute();
 
 The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
-that contains the result of the operation.
+that contains the result of the operation:
+
+.. code-block:: javascript
+
+   BulkWriteResult({
+      "writeErrors" : [ ],
+      "writeConcernErrors" : [ ],
+      "nInserted" : 0,
+      "nUpserted" : 0,
+      "nMatched" : 2,
+      "nModified" : 2,
+      "nRemoved" : 0,
+      "upserted" : [ ]
+   })
 
 The following example performs multiple update operations on the
-``users`` collection with the mongo shell:
+``items`` collection with the mongo shell:
 
 .. code-block:: javascript
 
    db.runCommand(
       {
-         update: "users",
+         update: "items",
          updates: [
-            { q: { status: "P" }, u: { $set: { status: "D" } }, multi: true },
-            { q: { _id: 5 }, u: { _id: 5, name: "abc123", status: "A" }, upsert: true }
+            { q: { status: "B" }, u: { $set: { status: "P" } }, multi: true },
+            { q: { _id: 21 }, u: { _id: 21, item: "tuv123", status: "A", "defaultQty" : 120, "points" : 75 }, upsert: true }
          ],
          ordered: false,
          writeConcern: { w: "majority", wtimeout: 5000 }
       }
    )
 
-The returned document shows that the command modified ``10`` documents
-and upserted a document with the ``_id`` value ``5``. See
-:ref:`update-command-output` for details.
+The returned document shows the command successfully selected two
+documents for update, updated three documents, and upserted a document with
+the ``_id`` value ``21``. See :ref:`update-command-output` for details.
 
 .. code-block:: javascript
 
    {
       "ok" : 1,
-      "nModified" : 10,
-      "n" : 11,
+      "nModified" : 2,
+      "n" : 3,
       "upserted" : [
          {
             "index" : 1,
-            "_id" : 5
+            "_id" : 21
          }
       ]
    }
@@ -158,38 +202,50 @@ operations:
 
 .. code-block:: javascript
 
-   var bulk = db.items.initializeUnorderedBulkOp();
-   bulk.find( { status: "D" } ).remove();
+   var bulk = db.items.initializeOrderedBulkOp();
+   bulk.find( { status: "P" } ).remove();
+   bulk.find( { status: "A" } ).update( { $set: { points: "50" } } );
    bulk.execute();
 
 The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
 that contains the result of the operation.
 
-The following operation deletes a group of documents from the ``orders``
-collection with the :program:`mongo` shell:
+.. code-block:: javascript
+
+   BulkWriteResult({
+      "writeErrors" : [ ],
+      "writeConcernErrors" : [ ],
+      "nInserted" : 0,
+      "nUpserted" : 0,
+      "nMatched" : 5,
+      "nModified" : 5,
+      "nRemoved" : 4,
+      "upserted" : [ ]
+   })
+
+The following operation deletes a group of documents from the ``items``
+collection:
 
 .. code-block:: javascript
 
    db.runCommand(
       {
-         delete: "orders",
+         delete: "items",
          deletes: [
-            { q: { status: "D" }, limit: 0 },
-            { q: { cust_num: 99999, item: "abc123", status: "A" }, limit: 1 }
+            { q: { defaultQty: "100" }, limit: 0 },
+            { q: { status: "A", defaultQty: { $gte: 250 } }, limit: 1 }
          ],
          ordered: false,
          writeConcern: { w: 1 }
       }
    )
 
-The operation returns a document similar to this example:
+The returned document shows the command successfully inserted the
+documents. See :ref:`delete-command-output` for details.
 
 .. code-block:: javascript
 
-   { "ok" : 1, "n" : 21 }
-
-See :ref:`delete-command-output` for more information about fields in this
-example document.
+   { "ok" : 1, "n" : 1 }
 
 Bulk Inserts on Sharded Clusters
 --------------------------------
@@ -239,7 +295,7 @@ consider the following modifications to your application:
 
 .. example:: The following example, in C++, swaps the leading and
    trailing 16-bit word of :term:`BSON` :term:`ObjectIds <ObjectId>`
-   generated so that they are no longer monotonically increasing.
+   generated so they are no longer monotonically increasing.
 
    .. code-block:: cpp
 
