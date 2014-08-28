@@ -10,18 +10,20 @@ Overview
 --------
 
 MongoDB provides an interface that allows clients to specify write
-operations in groups. A write protocol also integrates write operations
-with write concerns and provides improved support for bulk operations.
+operations in groups. A protocol also integrates write operations
+with write concerns to allow applications to determine the acceptable
+level of acknowledgement required of bulk operations.
+
+Bulk Operations
+~~~~~~~~~~~~~~~
 
 The :method:`Bulk()` operations builder constructs a list of operations to
-perform in bulk for a single collection. MongoDB allows applications to
-determine the acceptable level of acknowledgement required of bulk write
-operations.
+perform in bulk for a single collection.
 
 Bulk write operations are **ordered** or **unordered**:
 
 - Ordered bulk operations use the
-  :method:`db.collection.initializeOrderedBulkOp()` method to execute a
+  :method:`db.collection.initializeOrderedBulkOp()` method to initialize a
   list of write operations serially. If an error occurs during the
   processing of one of the write operations, MongoDB will return without
   processing any remaining write operations in the list.
@@ -34,16 +36,20 @@ Bulk write operations are **ordered** or **unordered**:
 
 The ordered or unordered type of bulk operations also affects the
 execution order. For example, if an ordered list has two insert operations
-followed by an update operation followed by another insert operation,
-MongoDB groups the operations into three separate groups: the first group
-contains the two insert operations, the second group contains the update
-operation, and the third group contains the last insert operation.
+followed by an update operation then another insert operation, MongoDB
+groups the operations into three separate groups: the first group contains
+the two insert operations, the second group contains the update operation,
+and the third group contains the last insert operation.
 
 With an unordered bulk operation, the operations in the list may be
 reordered by MongoDB to increase performance. As such, applications should
 not depend on the ordering when performing unordered bulk operations.
 
-.. include:: /includes/fact-bulk-operation-batches.rst
+See :method:`Bulk.execute()` for more information about bulk execution
+order.
+
+Bulk Commands
+~~~~~~~~~~~~~
 
 MongoDB also provides the :dbcommand:`insert`, :dbcommand:`update`, and
 :dbcommand:`delete` commands, which provide the basis for the improved
@@ -57,6 +63,11 @@ methods to perform bulk-write operations.
 
 .. TODO: section on general write operation considerations?
 
+Limits
+~~~~~~
+
+.. include:: /includes/fact-bulk-operation-batches.rst
+
 Examples
 --------
 
@@ -64,18 +75,16 @@ Bulk Insert
 ~~~~~~~~~~~
 
 The following initializes a :method:`Bulk()` operations builder for the
-``items`` collection and adds a series of insert operations to add
+``items`` collection, adds a series of insert operations to add
 multiple documents:
 
 .. code-block:: javascript
 
    var bulk = db.items.initializeOrderedBulkOp();
-   bulk.insert( { _id: 1, item: "abc123", status: "A", defaultQty: 500, points: 5 } );
-   bulk.insert( { _id: 2, item: "ijk123", status: "A", defaultQty: 100, points: 10 } );
-   bulk.insert( { _id: 3, item: "mop123", status: "B", defaultQty: 0, points: 0 } );
-   bulk.insert( { _id: 4, item: "qrs123", status: "P", defaultQty: 100, points: 20 } );
-   bulk.find( { status: "D" } ).removeOne();
-   bulk.find( { status: "D" } ).update( { $set: { points: 0 } } );
+   bulk.insert( { _id: 1, item: "abc123", status: "A", soldQty: 5000 } );
+   bulk.insert( { _id: 2, item: "ijk123", status: "A", soldQty: 150 } );
+   bulk.insert( { _id: 3, item: "mop123", status: "U", soldQty: 0 } );
+   bulk.insert( { _id: 4, item: "qrs123", status: "U", soldQty: 70 } );
    bulk.execute();
 
 The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
@@ -97,7 +106,8 @@ that contains the result of the operation:
 For details on the return object, see :method:`BulkWriteResult()`. For
 details on the batches executed, see :method:`Bulk.getOperations()`.
 
-The following inserts documents into the ``items`` collection:
+The following inserts documents into the ``items`` collection with
+:method:`db.runCommand()`:
 
 .. code-block:: javascript
 
@@ -105,12 +115,12 @@ The following inserts documents into the ``items`` collection:
       {
          insert: "items",
          documents: [
-            { _id: 11, item: "def123", status: "A", defaultQty: 200, points: 50 },
-            { _id: 12, item: "ghi123", status: "A", defaultQty: 200, points: 50 },
-            { _id: 13, item: "jkl123", status: "B", defaultQty: 100, points: 20 },
-            { _id: 14, item: "mno123", status: "P", defaultQty: 100, points: 20 }
+            { _id: 1, item: "abc123", status: "A", soldQty: 5000 },
+            { _id: 2, item: "ijk123", status: "A", soldQty: 150 },
+            { _id: 3, item: "mop123", status: "U", soldQty: 0 },
+            { _id: 4, item: "qrs123", status: "U", soldQty: 70 }
          ],
-         ordered: false,
+         ordered: true,
          writeConcern: { w: "majority", wtimeout: 5000 }
       }
    )
@@ -126,16 +136,15 @@ Bulk Update
 ~~~~~~~~~~~
 
 The following example initializes a :method:`Bulk()` operations builder
-for the ``items`` collection and adds a remove operation and an update
-operation to the list of operations. The remove operation and the
-update operation use the :method:`Bulk.find()` method to specify a
-condition for their respective actions:
+for the ``items`` collection and adds two update operations. The update
+operations use the :method:`Bulk.find()` method to specify a condition
+for their respective actions:
 
 .. code-block:: javascript
 
    var bulk = db.items.initializeUnorderedBulkOp();
-   bulk.find( { status: "D" } ).remove();
-   bulk.find( { status: "P" } ).update( { $set: { points: 200 } } )
+   bulk.find( { item: "qrs123" } ).update( { $set: { soldQty: 700 } } )
+   bulk.find( { soldQty: { $lte: 500 } } ).update( { $set: { status: "X" } } )
    bulk.execute();
 
 The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
@@ -148,14 +157,14 @@ that contains the result of the operation:
       "writeConcernErrors" : [ ],
       "nInserted" : 0,
       "nUpserted" : 0,
-      "nMatched" : 2,
-      "nModified" : 2,
+      "nMatched" : 3,
+      "nModified" : 3,
       "nRemoved" : 0,
       "upserted" : [ ]
    })
 
 The following example performs multiple update operations on the
-``items`` collection with the mongo shell:
+``items`` collection with :method:`db.runCommand()`:
 
 .. code-block:: javascript
 
@@ -163,31 +172,20 @@ The following example performs multiple update operations on the
       {
          update: "items",
          updates: [
-            { q: { status: "B" }, u: { $set: { status: "P" } }, multi: true },
-            { q: { _id: 21 }, u: { _id: 21, item: "tuv123", status: "A", "defaultQty" : 120, "points" : 75 }, upsert: true }
+            { q: { item: "qrs123" }, u: { $set: { soldQty: 700 } }, multi: true },
+            { q: { soldQty: { $lte: 500 } }, u: { $set: { status: "X" } }, multi: true },
          ],
-         ordered: false,
+         ordered: true,
          writeConcern: { w: "majority", wtimeout: 5000 }
       }
    )
 
-The returned document shows the command successfully selected two
-documents for update, updated three documents, and upserted a document with
-the ``_id`` value ``21``. See :ref:`update-command-output` for details.
+The returned document shows the result of the operation. See
+:ref:`update-command-output` for details.
 
 .. code-block:: javascript
 
-   {
-      "ok" : 1,
-      "nModified" : 2,
-      "n" : 3,
-      "upserted" : [
-         {
-            "index" : 1,
-            "_id" : 21
-         }
-      ]
-   }
+   { "ok" : 1, "nModified" : 3, "n" : 3 }
 
 Bulk Delete
 ~~~~~~~~~~~
@@ -203,9 +201,10 @@ operations:
 .. code-block:: javascript
 
    var bulk = db.items.initializeOrderedBulkOp();
-   bulk.find( { status: "P" } ).remove();
-   bulk.find( { status: "A" } ).update( { $set: { points: "50" } } );
+   bulk.find( { status: "X" } ).remove();
+   bulk.find( { soldQty: { $lte: 1000 } } ).remove();
    bulk.execute();
+   bulk.getOperations();
 
 The :method:`Bulk()` method returns a :method:`BulkWriteResult` object
 that contains the result of the operation.
@@ -217,14 +216,14 @@ that contains the result of the operation.
       "writeConcernErrors" : [ ],
       "nInserted" : 0,
       "nUpserted" : 0,
-      "nMatched" : 5,
-      "nModified" : 5,
-      "nRemoved" : 4,
+      "nMatched" : 0,
+      "nModified" : 0,
+      "nRemoved" : 3,
       "upserted" : [ ]
    })
 
 The following operation deletes a group of documents from the ``items``
-collection:
+collection with :method:`db.runCommand()`:
 
 .. code-block:: javascript
 
@@ -232,27 +231,27 @@ collection:
       {
          delete: "items",
          deletes: [
-            { q: { defaultQty: "100" }, limit: 0 },
-            { q: { status: "A", defaultQty: { $gte: 250 } }, limit: 1 }
+            { q: { status: "X" }, limit: 1 },
+            { q: { soldQty: { $lte: 1000 } }, limit: 1 },
          ],
-         ordered: false,
+         ordered: true,
          writeConcern: { w: 1 }
       }
    )
 
-The returned document shows the command successfully inserted the
-documents. See :ref:`delete-command-output` for details.
+The returned document shows the result of the operation. See
+:ref:`delete-command-output` for details.
 
 .. code-block:: javascript
 
-   { "ok" : 1, "n" : 1 }
+   { "ok" : 1, "n" : 3 }
 
 Bulk Inserts on Sharded Clusters
 --------------------------------
 
 While ``ContinueOnError`` is optional on unsharded clusters, all bulk
-operations to a :term:`sharded collection <sharded cluster>` run with
-``ContinueOnError``, which cannot be disabled.
+operations to a :term:`sharded collection <sharded cluster>` do not run
+with ``ContinueOnError``, which cannot be disabled.
 
 Large bulk insert operations, including initial data inserts or routine
 data import, can affect :term:`sharded cluster` performance. For
